@@ -1,0 +1,376 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidIsoTimestamp(ts) {
+      return ts is string && ts.size() >= 10 && ts.size() <= 40;
+    }
+
+    // Validation Blueprints
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'playerId', 'username', 'avatar', 'frame',
+          'equippedCue', 'equippedTable', 'equippedEffect', 'ownedItems',
+          'level', 'xp', 'coins', 'rating', 'wins', 'losses', 'matches',
+          'dailyStreak', 'lastDailyClaim', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'playerId', 'username', 'avatar', 'frame',
+          'equippedCue', 'equippedTable', 'equippedEffect', 'ownedItems',
+          'level', 'xp', 'coins', 'rating', 'wins', 'losses', 'matches',
+          'dailyStreak', 'lastDailyClaim', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.playerId is string && data.playerId.size() >= 4 && data.playerId.size() <= 24 && data.playerId.matches('^[A-Z0-9\\-]+$')
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 24 && data.username.matches('^[a-zA-Z0-9_ .-]+$')
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 64
+        && data.frame is string && data.frame.size() >= 1 && data.frame.size() <= 64
+        && data.equippedCue is string && data.equippedCue.size() >= 1 && data.equippedCue.size() <= 64
+        && data.equippedTable is string && data.equippedTable.size() >= 1 && data.equippedTable.size() <= 64
+        && data.equippedEffect is string && data.equippedEffect.size() >= 1 && data.equippedEffect.size() <= 64
+        && data.ownedItems is list && data.ownedItems.size() >= 1 && data.ownedItems.size() <= 60
+        && data.ownedItems[0] is string && data.ownedItems[0].size() <= 64
+        && data.level is int && data.level >= 1 && data.level <= 500
+        && data.xp is int && data.xp >= 0 && data.xp <= 10000000
+        && data.coins is int && data.coins >= 0 && data.coins <= 100000000
+        && data.rating is int && data.rating >= 100 && data.rating <= 5000
+        && data.wins is int && data.wins >= 0 && data.wins <= 1000000
+        && data.losses is int && data.losses >= 0 && data.losses <= 1000000
+        && data.matches is int && data.matches >= 0 && data.matches <= 2000000
+        && data.dailyStreak is int && data.dailyStreak >= 0 && data.dailyStreak <= 3650
+        && data.lastDailyClaim is string && data.lastDailyClaim.size() <= 40
+        && isValidIsoTimestamp(data.createdAt)
+        && isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'musicEnabled', 'sfxEnabled', 'vibrationEnabled',
+          'graphicsQuality', 'language', 'sensitivity', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'musicEnabled', 'sfxEnabled', 'vibrationEnabled',
+          'graphicsQuality', 'language', 'sensitivity', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && (!('email' in data) || (data.email is string && data.email.size() <= 254))
+        && data.musicEnabled is bool
+        && data.sfxEnabled is bool
+        && data.vibrationEnabled is bool
+        && data.graphicsQuality in ['low', 'medium', 'high']
+        && data.language in ['en', 'id']
+        && data.sensitivity is number && data.sensitivity >= 0.2 && data.sensitivity <= 2.5
+        && isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidFriendRelation(data) {
+      return data.keys().hasAll(['userId', 'friendId', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'friendId', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.userId)
+        && isValidId(data.friendId)
+        && data.userId != data.friendId
+        && data.status in ['pending', 'accepted']
+        && isValidIsoTimestamp(data.createdAt)
+        && isValidIsoTimestamp(data.updatedAt);
+    }
+
+    function isValidRoom(data, roomId) {
+      return data.keys().hasAll(['roomId', 'roomCode', 'hostId', 'guestId', 'entryFee', 'matchId', 'status', 'createdAt', 'expiresAt'])
+        && data.keys().hasOnly(['roomId', 'roomCode', 'hostId', 'guestId', 'entryFee', 'matchId', 'gameVariant', 'status', 'createdAt', 'expiresAt'])
+        && data.roomId == roomId && isValidId(data.roomId)
+        && data.roomCode is string && data.roomCode.size() == 6 && data.roomCode.matches('^[A-Z0-9]+$')
+        && isValidId(data.hostId)
+        && data.guestId is string && data.guestId.size() <= 128
+        && data.entryFee is int && data.entryFee in [0, 100, 500, 1000]
+        && data.matchId is string && data.matchId.size() <= 64
+        && (!('gameVariant' in data) || data.gameVariant in ['8ball', '9ball'])
+        && data.status in ['waiting', 'playing', 'finished', 'cancelled']
+        && isValidIsoTimestamp(data.createdAt)
+        && isValidIsoTimestamp(data.expiresAt);
+    }
+
+    function isValidMatch(data, matchId) {
+      return data.keys().hasAll(['matchId', 'playerA', 'playerB', 'gameMode', 'currentTurn', 'status', 'winnerId', 'createdAt'])
+        && data.keys().hasOnly(['matchId', 'playerA', 'playerB', 'gameMode', 'gameVariant', 'currentTurn', 'status', 'winnerId', 'createdAt', 'endedAt', 'entryFee', 'seq', 'winReason', 'balls', 'rules', 'lastAction'])
+        && data.matchId == matchId && isValidId(data.matchId)
+        && isValidId(data.playerA)
+        && isValidId(data.playerB)
+        && data.gameMode in ['quick_match', 'private_room', 'online_ranked', 'practice']
+        && (!('gameVariant' in data) || data.gameVariant in ['8ball', '9ball'])
+        && data.currentTurn in ['A', 'B']
+        && data.status in ['active', 'completed', 'cancelled']
+        && data.winnerId is string && data.winnerId.size() <= 128
+        && isValidIsoTimestamp(data.createdAt)
+        && (!('endedAt' in data) || isValidIsoTimestamp(data.endedAt))
+        && (!('entryFee' in data) || (data.entryFee is int && data.entryFee >= 0 && data.entryFee <= 10000))
+        && (!('seq' in data) || (data.seq is int && data.seq >= 0 && data.seq <= 100000))
+        && (!('winReason' in data) || (data.winReason is string && data.winReason.size() <= 128))
+        && (!('balls' in data) || (data.balls is list && data.balls.size() >= 10 && data.balls.size() <= 16 && data.balls[0] is map))
+        && (!('rules' in data) || (data.rules is map && data.rules.size() >= 5 && data.rules.size() <= 24))
+        && (!('lastAction' in data) || (data.lastAction is map && data.lastAction.size() >= 2 && data.lastAction.size() <= 16));
+    }
+
+    function isValidMatchHistory(data) {
+      return data.keys().hasAll([
+          'matchId', 'playerId', 'opponentName', 'opponentAvatar',
+          'result', 'shots', 'duration', 'xpEarned', 'coinsEarned', 'ratingDelta', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'matchId', 'playerId', 'opponentName', 'opponentAvatar',
+          'result', 'shots', 'duration', 'xpEarned', 'coinsEarned', 'ratingDelta', 'createdAt'
+        ])
+        && isValidId(data.matchId)
+        && isValidId(data.playerId) && data.playerId == request.auth.uid
+        && data.opponentName is string && data.opponentName.size() >= 1 && data.opponentName.size() <= 32
+        && data.opponentAvatar is string && data.opponentAvatar.size() >= 1 && data.opponentAvatar.size() <= 64
+        && data.result in ['win', 'loss']
+        && data.shots is int && data.shots >= 0 && data.shots <= 1000
+        && data.duration is int && data.duration >= 0 && data.duration <= 36000
+        && data.xpEarned is int && data.xpEarned >= 0 && data.xpEarned <= 1000
+        && data.coinsEarned is int && data.coinsEarned >= 0 && data.coinsEarned <= 10000
+        && data.ratingDelta is int && data.ratingDelta >= -100 && data.ratingDelta <= 100
+        && isValidIsoTimestamp(data.createdAt);
+    }
+
+    function isValidTransaction(data, transactionId) {
+      return data.keys().hasAll(['transactionId', 'userId', 'amount', 'type', 'referenceId', 'createdAt'])
+        && data.keys().hasOnly(['transactionId', 'userId', 'amount', 'type', 'referenceId', 'createdAt'])
+        && data.transactionId == transactionId && isValidId(data.transactionId)
+        && isValidId(data.userId) && data.userId == request.auth.uid
+        && data.amount is int && data.amount >= -100000 && data.amount <= 10000
+        && data.type in ['daily_reward', 'match_reward', 'match_entry', 'shop_purchase', 'starter_bonus']
+        && data.referenceId is string && data.referenceId.size() >= 1 && data.referenceId.size() <= 128
+        && isValidIsoTimestamp(data.createdAt);
+    }
+
+    // Connection health check
+    match /test/{docId} {
+      allow get: if isSignedIn() && docId == 'connection';
+      allow list, write: if false;
+    }
+
+    // Public Player Profiles (zero PII)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().level == 1
+        && incoming().xp == 0
+        && incoming().coins == 500
+        && incoming().rating == 1000
+        && incoming().wins == 0
+        && incoming().losses == 0
+        && incoming().matches == 0;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().playerId == existing().playerId
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action 1: Profile & Loadout customization
+          incoming().diff(existing()).affectedKeys().hasOnly(['username', 'avatar', 'frame', 'equippedCue', 'equippedTable', 'equippedEffect', 'updatedAt'])
+          // Action 2: Shop purchase (strictly reduces coins, adds at most 1 item)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'ownedItems', 'equippedCue', 'equippedTable', 'equippedEffect', 'avatar', 'frame', 'updatedAt'])
+            && incoming().coins < existing().coins
+            && incoming().ownedItems.size() <= existing().ownedItems.size() + 1
+          )
+          // Action 3: Daily reward claim (bounded reward)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'dailyStreak', 'lastDailyClaim', 'updatedAt'])
+            && incoming().coins > existing().coins
+            && incoming().coins <= existing().coins + 1000
+            && incoming().dailyStreak <= existing().dailyStreak + 1
+          )
+          // Action 4: Match settlement sync (bounded progression)
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['level', 'xp', 'coins', 'rating', 'wins', 'losses', 'matches', 'updatedAt'])
+            && incoming().matches == existing().matches + 1
+            && incoming().xp >= existing().xp && incoming().xp <= existing().xp + 500
+            && incoming().coins <= existing().coins + 5000
+            && incoming().rating >= existing().rating - 64 && incoming().rating <= existing().rating + 64
+          )
+        );
+
+      allow delete: if false;
+
+      // Owner-only private settings & email
+      match /private/{docId} {
+        allow get: if isOwner(userId) && isValidId(userId) && docId == 'info';
+        allow list: if false;
+        allow create: if isOwner(userId) && isValidId(userId) && docId == 'info' && isValidUserPrivateInfo(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && docId == 'info' && isValidUserPrivateInfo(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'musicEnabled', 'sfxEnabled', 'vibrationEnabled', 'graphicsQuality', 'language', 'sensitivity', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    // Friends
+    match /friends/{friendshipId} {
+      allow get: if isSignedIn() && isValidId(friendshipId) && (existing().userId == request.auth.uid || existing().friendId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.friendId == request.auth.uid);
+
+      allow create: if isSignedIn()
+        && isValidId(friendshipId)
+        && isValidFriendRelation(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && exists(/databases/$(database)/documents/users/$(incoming().friendId));
+
+      allow update: if isSignedIn()
+        && isValidId(friendshipId)
+        && isValidFriendRelation(incoming())
+        && incoming().userId == existing().userId
+        && incoming().friendId == existing().friendId
+        && incoming().createdAt == existing().createdAt
+        && existing().status == 'pending'
+        && request.auth.uid == existing().friendId
+        && incoming().status == 'accepted'
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(friendshipId) && (existing().userId == request.auth.uid || existing().friendId == request.auth.uid);
+    }
+
+    // Private Rooms (strict participant-only list, zero code scraping)
+    match /rooms/{roomId} {
+      allow get: if isSignedIn() && isValidId(roomId) && (existing().hostId == request.auth.uid || existing().guestId == request.auth.uid || existing().status == 'waiting');
+      allow list: if isSignedIn() && (resource.data.hostId == request.auth.uid || resource.data.guestId == request.auth.uid);
+
+      allow create: if isSignedIn()
+        && isValidId(roomId)
+        && isValidRoom(incoming(), roomId)
+        && incoming().hostId == request.auth.uid
+        && incoming().guestId == ''
+        && incoming().matchId == ''
+        && incoming().status == 'waiting';
+
+      allow update: if isSignedIn()
+        && isValidId(roomId)
+        && isValidRoom(incoming(), roomId)
+        && incoming().roomId == existing().roomId
+        && incoming().roomCode == existing().roomCode
+        && incoming().hostId == existing().hostId
+        && incoming().entryFee == existing().entryFee
+        && incoming().createdAt == existing().createdAt
+        && existing().status in ['waiting', 'playing']
+        && (
+          // Action 1: Guest joins open waiting room (2-player cap enforced)
+          (
+            existing().status == 'waiting'
+            && existing().guestId == ''
+            && incoming().guestId == request.auth.uid
+            && request.auth.uid != existing().hostId
+            && incoming().diff(existing()).affectedKeys().hasOnly(['guestId'])
+          )
+          // Action 2: Host starts match or cancels/finishes
+          || (
+            request.auth.uid == existing().hostId
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'guestId', 'matchId'])
+          )
+          // Action 3: Guest leaves waiting room
+          || (
+            request.auth.uid == existing().guestId
+            && existing().status == 'waiting'
+            && incoming().guestId == ''
+            && incoming().diff(existing()).affectedKeys().hasOnly(['guestId'])
+          )
+          // Action 4: Participant marks playing room finished at match end
+          || (
+            (request.auth.uid == existing().hostId || request.auth.uid == existing().guestId)
+            && existing().status == 'playing'
+            && incoming().status == 'finished'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // Matches
+    match /matches/{matchId} {
+      allow get: if isSignedIn() && isValidId(matchId) && (existing().playerA == request.auth.uid || existing().playerB == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.playerA == request.auth.uid || resource.data.playerB == request.auth.uid);
+
+      allow create: if isSignedIn()
+        && isValidId(matchId)
+        && isValidMatch(incoming(), matchId)
+        && (incoming().playerA == request.auth.uid || incoming().playerB == request.auth.uid)
+        && incoming().status == 'active'
+        && incoming().winnerId == '';
+
+      allow update: if isSignedIn()
+        && isValidId(matchId)
+        && isValidMatch(incoming(), matchId)
+        && existing().status == 'active'
+        && (request.auth.uid == existing().playerA || request.auth.uid == existing().playerB)
+        && incoming().matchId == existing().matchId
+        && incoming().playerA == existing().playerA
+        && incoming().playerB == existing().playerB
+        && incoming().gameMode == existing().gameMode
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Action 1: Active gameplay updates (aim, cue ball, shot, turn resolve, chat)
+          (
+            incoming().status == 'active'
+            && incoming().winnerId == ''
+            && incoming().diff(existing()).affectedKeys().hasOnly(['currentTurn', 'seq', 'balls', 'rules', 'lastAction'])
+          )
+          // Action 2: Terminal completion or concession
+          || (
+            incoming().status in ['completed', 'cancelled']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['currentTurn', 'status', 'winnerId', 'winReason', 'endedAt', 'seq', 'balls', 'rules', 'lastAction'])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // Immutable Match History
+    match /match_history/{historyId} {
+      allow get: if isSignedIn() && isValidId(historyId) && existing().playerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.playerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(historyId) && isValidMatchHistory(incoming());
+      allow update, delete: if false;
+    }
+
+    // Immutable Virtual Transactions
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && isValidId(transactionId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(transactionId) && isValidTransaction(incoming(), transactionId);
+      allow update, delete: if false;
+    }
+  }
+}
